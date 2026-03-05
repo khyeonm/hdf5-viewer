@@ -1,6 +1,6 @@
 {
   "name": "hdf5-viewer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "HDF5 tree explorer with collapsible group hierarchy, dataset preview, and attribute display",
   "extensions": [
     "h5ad",

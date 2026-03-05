@@ -14,7 +14,7 @@
     if (window.jsfive) { cb(); return; }
     var s = document.createElement('script');
     s.src = url;
-    s.onload = cb;
+    s.onload = function() { cb(); };
     s.onerror = function() { cb(new Error('Failed to load jsfive')); };
     document.head.appendChild(s);
   }
