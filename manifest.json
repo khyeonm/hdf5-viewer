@@ -1,0 +1,12 @@
+{
+  "name": "hdf5-viewer",
+  "version": "1.0.0",
+  "description": "HDF5 tree explorer with collapsible group hierarchy, dataset preview, and attribute display",
+  "extensions": [
+    "h5ad",
+    "h5",
+    "hdf5"
+  ],
+  "entry": "index.js",
+  "style": "style.css"
+}

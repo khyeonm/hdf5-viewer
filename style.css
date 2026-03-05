@@ -1,0 +1,119 @@
+.hdf5-plugin {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  color: #333;
+  display: flex;
+  gap: 0;
+  height: 550px;
+}
+
+.hdf5-tree-panel {
+  width: 280px;
+  min-width: 200px;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px 0 0 6px;
+  overflow-y: auto;
+  background: #f7f8fa;
+}
+
+.hdf5-data-panel {
+  flex: 1;
+  border: 1px solid #e0e0e0;
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  overflow: auto;
+  padding: 12px;
+  background: #fff;
+}
+
+.hdf5-tree-header {
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: 12px;
+  color: #555;
+  border-bottom: 1px solid #e0e0e0;
+  background: #f0f4f8;
+}
+
+.tree-node {
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  border-bottom: 1px solid #f0f0f0;
+}
+.tree-node:hover { background: #ebedf0; }
+.tree-node.selected { background: #d4e5f7; }
+
+.tree-icon { margin-right: 4px; font-size: 11px; }
+.tree-group .tree-icon { color: #e65100; }
+.tree-dataset .tree-icon { color: #1565c0; }
+
+.tree-indent { display: inline-block; }
+
+.data-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+  color: #1565c0;
+}
+
+.data-meta {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.data-meta .meta-item {
+  font-size: 12px;
+  color: #555;
+  padding: 2px 8px;
+  background: #f0f4f8;
+  border-radius: 4px;
+}
+.data-meta .meta-item b { color: #333; }
+
+.data-attrs {
+  margin-bottom: 12px;
+}
+.data-attrs-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 4px;
+}
+.attr-row {
+  font-size: 11px;
+  padding: 2px 0;
+  color: #555;
+}
+.attr-row b { color: #333; }
+
+.data-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 4px;
+}
+.data-preview {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 8px;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.data-empty {
+  text-align: center;
+  padding: 40px;
+  color: #aaa;
+  font-size: 13px;
+}
+
+.hdf5-loading { text-align: center; padding: 40px; color: #888; }
+.hdf5-error { color: #c62828; padding: 16px; }
