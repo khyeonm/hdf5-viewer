@@ -11,7 +11,7 @@
   var JSFIVE_CDN = 'https://cdn.jsdelivr.net/npm/jsfive@0.3.10/dist/browser/hdf5.js';
 
   function loadScript(url, cb) {
-    if (window.jsfive) { cb(); return; }
+    if (window.hdf5) { cb(); return; }
     var s = document.createElement('script');
     s.src = url;
     s.onload = function() { cb(); };
@@ -204,7 +204,7 @@
           .then(function(resp) { return resp.arrayBuffer(); })
           .then(function(buf) {
             try {
-              hdf5File = new jsfive.File(buf);
+              hdf5File = new hdf5.File(buf);
               render();
             } catch(e) {
               rootEl.innerHTML = '<div class="hdf5-error">Error parsing HDF5 file: ' + e.message + '</div>';
