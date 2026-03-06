@@ -102,7 +102,7 @@
   border: 1px solid #e0e0e0;
   border-radius: 4px;
   padding: 8px;
-  max-height: 300px;
+  max-height: 450px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
@@ -114,6 +114,16 @@
   color: #aaa;
   font-size: 13px;
 }
+
+.data-table-wrap { overflow: auto; max-height: 400px; }
+.data-table { border-collapse: collapse; font-size: 11px; font-family: 'Courier New', monospace; }
+.data-table th { background: #f0f4f8; padding: 4px 8px; border: 1px solid #e0e0e0; position: sticky; top: 0; font-weight: 600; color: #555; white-space: nowrap; }
+.data-table td { padding: 3px 8px; border: 1px solid #f0f0f0; white-space: nowrap; }
+.data-table tr:hover td { background: #f0f7ff; }
+.data-table .row-idx { background: #f7f8fa; color: #999; font-weight: 600; }
+.data-size-info { font-size: 11px; color: #888; margin-bottom: 6px; }
+.data-too-large { color: #e65100; padding: 12px; background: #fff3e0; border-radius: 4px; font-size: 12px; }
+.data-preview pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
 
 .hdf5-loading { text-align: center; padding: 40px; color: #888; }
 .hdf5-error { color: #c62828; padding: 16px; }

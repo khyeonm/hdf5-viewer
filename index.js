@@ -72,21 +72,77 @@
     return attrs;
   }
 
-  function getDataPreview(dataset, maxElements) {
-    maxElements = maxElements || 100;
+  var MAX_ELEMENTS = 1000000; // 1M elements limit
+  var MAX_PREVIEW_ROWS = 100;
+  var MAX_PREVIEW_COLS = 20;
+
+  function totalElements(shape) {
+    if (!shape || !shape.length) return 0;
+    var n = 1;
+    for (var i = 0; i < shape.length; i++) n *= shape[i];
+    return n;
+  }
+
+  function getDataPreview(dataset) {
     try {
-      var val = dataset.value;
-      if (!val) return '(empty)';
-      if (Array.isArray(val) || ArrayBuffer.isView(val)) {
-        var arr = Array.from(val).slice(0, maxElements);
-        var total = val.length || 0;
-        var text = arr.join(', ');
-        if (total > maxElements) text += '\n... (' + total.toLocaleString() + ' total elements)';
-        return text;
+      var shape = dataset.shape;
+      var total = totalElements(shape);
+
+      if (total > MAX_ELEMENTS) {
+        return '<div class="data-too-large">Dataset too large to preview (' +
+          total.toLocaleString() + ' elements, ' + shape.join(' x ') +
+          '). Use Python to access this data.</div>';
       }
-      return String(val).substring(0, 5000);
+
+      var val = dataset.value;
+      if (!val) return '<span style="color:#999">(empty)</span>';
+
+      // 2D array: render as table
+      if (shape && shape.length === 2) {
+        var rows = shape[0];
+        var cols = shape[1];
+        var showRows = Math.min(rows, MAX_PREVIEW_ROWS);
+        var showCols = Math.min(cols, MAX_PREVIEW_COLS);
+
+        var html = '<div class="data-size-info">Showing ' + showRows + ' of ' +
+          rows.toLocaleString() + ' rows, ' + showCols + ' of ' +
+          cols.toLocaleString() + ' columns</div>';
+        html += '<div class="data-table-wrap"><table class="data-table">';
+        html += '<thead><tr><th>#</th>';
+        for (var c = 0; c < showCols; c++) html += '<th>' + c + '</th>';
+        if (showCols < cols) html += '<th>...</th>';
+        html += '</tr></thead><tbody>';
+        for (var r = 0; r < showRows; r++) {
+          html += '<tr><td class="row-idx">' + r + '</td>';
+          for (var c2 = 0; c2 < showCols; c2++) {
+            var v = val[r * cols + c2];
+            var display = typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(4)) : String(v);
+            html += '<td>' + display + '</td>';
+          }
+          if (showCols < cols) html += '<td>...</td>';
+          html += '</tr>';
+        }
+        if (showRows < rows) {
+          html += '<tr><td colspan="' + (showCols + 2) + '" style="text-align:center;color:#999">... ' +
+            (rows - showRows).toLocaleString() + ' more rows</td></tr>';
+        }
+        html += '</tbody></table></div>';
+        return html;
+      }
+
+      // 1D array
+      if (Array.isArray(val) || ArrayBuffer.isView(val)) {
+        var arr = Array.from(val).slice(0, 200);
+        var text = arr.map(function(v) {
+          return typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(4)) : String(v);
+        }).join(', ');
+        if (val.length > 200) text += '\n... (' + val.length.toLocaleString() + ' total elements)';
+        return '<pre>' + text + '</pre>';
+      }
+
+      return '<pre>' + String(val).substring(0, 5000) + '</pre>';
     } catch(e) {
-      return '(unable to read: ' + e.message + ')';
+      return '<span style="color:#c62828">(unable to read: ' + e.message + ')</span>';
     }
   }
 
