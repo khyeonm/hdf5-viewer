@@ -19,38 +19,66 @@
     document.head.appendChild(s);
   }
 
+  function isDataset(obj) {
+    if (!obj) return false;
+    try { if (obj.shape && obj.shape.length > 0) return true; } catch(e) {}
+    try { if (obj.dtype) return true; } catch(e) {}
+    try { if (obj.value !== undefined && obj.keys === undefined) return true; } catch(e) {}
+    return false;
+  }
+
+  function isGroupObj(obj) {
+    if (!obj) return false;
+    try { return obj.keys !== undefined && !isDataset(obj); } catch(e) { return false; }
+  }
+
+  function getChildKeys(obj) {
+    try { return obj.keys ? obj.keys : Object.keys(obj); } catch(e) { return []; }
+  }
+
   function walkTree(group, path, depth) {
     var nodes = [];
-    if (depth > 5) return nodes;
-    var keys;
-    try { keys = group.keys ? group.keys : Object.keys(group); } catch(e) { return nodes; }
+    if (depth > 8) return nodes;
+    var keys = getChildKeys(group);
 
     for (var i = 0; i < keys.length; i++) {
       var key = keys[i];
       var childPath = path ? path + '/' + key : key;
       var child;
       try { child = group.get(key); } catch(e) { continue; }
-
       if (!child) continue;
 
-      var isGroup = child.keys !== undefined || (child.type === 'Group');
+      var dataset = isDataset(child);
+      var grp = isGroupObj(child);
+
+      // If it has both keys and shape, treat as a hybrid (group with data)
+      var hasChildren = false;
+      try { hasChildren = grp || (child.keys !== undefined && getChildKeys(child).length > 0 && !dataset); } catch(e) {}
+
+      // Some h5ad objects have keys AND shape — they are datasets inside a group-like wrapper
+      var hasKeysAndShape = false;
+      try { hasKeysAndShape = child.keys !== undefined && child.shape && child.shape.length > 0; } catch(e) {}
+
+      var nodeIsGroup = hasChildren && !hasKeysAndShape;
+
       var node = {
         name: key,
         path: childPath,
         depth: depth,
-        isGroup: isGroup,
+        isGroup: nodeIsGroup,
+        isDataset: dataset || hasKeysAndShape,
         shape: null,
         dtype: null
       };
 
-      if (!isGroup) {
+      if (dataset || hasKeysAndShape) {
         try { node.shape = child.shape; } catch(e) {}
         try { node.dtype = child.dtype; } catch(e) {}
       }
 
       nodes.push(node);
 
-      if (isGroup && expandedPaths[childPath]) {
+      if (nodeIsGroup && expandedPaths[childPath]) {
         var children = walkTree(child, childPath, depth + 1);
         for (var j = 0; j < children.length; j++) nodes.push(children[j]);
       }
@@ -72,15 +100,20 @@
     return attrs;
   }
 
-  var MAX_ELEMENTS = 1000000; // 1M elements limit
-  var MAX_PREVIEW_ROWS = 100;
-  var MAX_PREVIEW_COLS = 20;
+  var MAX_ELEMENTS = 1000000;
+  var MAX_PREVIEW_ROWS = 50;
+  var MAX_PREVIEW_COLS = 10;
 
   function totalElements(shape) {
     if (!shape || !shape.length) return 0;
     var n = 1;
     for (var i = 0; i < shape.length; i++) n *= shape[i];
     return n;
+  }
+
+  function formatVal(v) {
+    if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(4);
+    return String(v);
   }
 
   function getDataPreview(dataset) {
@@ -97,16 +130,19 @@
       var val = dataset.value;
       if (!val) return '<span style="color:#999">(empty)</span>';
 
-      // 2D array: render as table
+      // 2D array
       if (shape && shape.length === 2) {
         var rows = shape[0];
         var cols = shape[1];
         var showRows = Math.min(rows, MAX_PREVIEW_ROWS);
         var showCols = Math.min(cols, MAX_PREVIEW_COLS);
 
-        var html = '<div class="data-size-info">Showing ' + showRows + ' of ' +
-          rows.toLocaleString() + ' rows, ' + showCols + ' of ' +
-          cols.toLocaleString() + ' columns</div>';
+        var html = '<div class="data-size-info">' + rows.toLocaleString() + ' rows x ' +
+          cols.toLocaleString() + ' columns';
+        if (showRows < rows || showCols < cols) {
+          html += ' (showing ' + showRows + ' x ' + showCols + ')';
+        }
+        html += '</div>';
         html += '<div class="data-table-wrap"><table class="data-table">';
         html += '<thead><tr><th>#</th>';
         for (var c = 0; c < showCols; c++) html += '<th>' + c + '</th>';
@@ -115,15 +151,13 @@
         for (var r = 0; r < showRows; r++) {
           html += '<tr><td class="row-idx">' + r + '</td>';
           for (var c2 = 0; c2 < showCols; c2++) {
-            var v = val[r * cols + c2];
-            var display = typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(4)) : String(v);
-            html += '<td>' + display + '</td>';
+            html += '<td>' + formatVal(val[r * cols + c2]) + '</td>';
           }
           if (showCols < cols) html += '<td>...</td>';
           html += '</tr>';
         }
         if (showRows < rows) {
-          html += '<tr><td colspan="' + (showCols + 2) + '" style="text-align:center;color:#999">... ' +
+          html += '<tr><td colspan="' + (showCols + 2) + '" style="text-align:center;color:#999;padding:8px">... ' +
             (rows - showRows).toLocaleString() + ' more rows</td></tr>';
         }
         html += '</tbody></table></div>';
@@ -132,14 +166,14 @@
 
       // 1D array
       if (Array.isArray(val) || ArrayBuffer.isView(val)) {
-        var arr = Array.from(val).slice(0, 200);
-        var text = arr.map(function(v) {
-          return typeof v === 'number' ? (Number.isInteger(v) ? v : v.toFixed(4)) : String(v);
-        }).join(', ');
-        if (val.length > 200) text += '\n... (' + val.length.toLocaleString() + ' total elements)';
+        var len = val.length;
+        var arr = Array.from(val).slice(0, 100);
+        var text = arr.map(formatVal).join(', ');
+        if (len > 100) text += '\n... (' + len.toLocaleString() + ' total elements)';
         return '<pre>' + text + '</pre>';
       }
 
+      // Scalar or string
       return '<pre>' + String(val).substring(0, 5000) + '</pre>';
     } catch(e) {
       return '<span style="color:#c62828">(unable to read: ' + e.message + ')</span>';
@@ -149,6 +183,55 @@
   function buildTree() {
     if (!hdf5File) return;
     treeData = walkTree(hdf5File, '', 0);
+  }
+
+  function renderDetail(path) {
+    var obj;
+    try { obj = hdf5File.get(path); } catch(e) { return '<div class="data-empty">Unable to read: ' + path + '</div>'; }
+    if (!obj) return '<div class="data-empty">Unable to read: ' + path + '</div>';
+
+    var dataset = isDataset(obj);
+    var grp = isGroupObj(obj);
+    var html = '';
+
+    html += '<div class="data-title">' + (dataset ? '\uD83D\uDCCA ' : '\uD83D\uDCC1 ') + path + '</div>';
+
+    // Shape & dtype for datasets
+    if (dataset) {
+      html += '<div class="data-meta">';
+      try { if (obj.shape) html += '<span class="meta-item">Shape: <b>' + obj.shape.join(' x ') + '</b></span>'; } catch(e) {}
+      try { if (obj.dtype) html += '<span class="meta-item">Dtype: <b>' + obj.dtype + '</b></span>'; } catch(e) {}
+      html += '</div>';
+    }
+
+    // Attributes
+    var attrs = getAttrs(obj);
+    var attrKeys = Object.keys(attrs);
+    if (attrKeys.length > 0) {
+      html += '<div class="data-attrs">';
+      html += '<div class="data-attrs-title">Attributes (' + attrKeys.length + ')</div>';
+      for (var ai = 0; ai < attrKeys.length; ai++) {
+        html += '<div class="attr-row"><b>' + attrKeys[ai] + '</b>: ' + attrs[attrKeys[ai]] + '</div>';
+      }
+      html += '</div>';
+    }
+
+    // Data preview for datasets
+    if (dataset) {
+      html += '<div class="data-preview-title">Data Preview</div>';
+      html += '<div class="data-preview">' + getDataPreview(obj) + '</div>';
+    } else if (grp) {
+      // Group: show children list
+      var childKeys = getChildKeys(obj);
+      html += '<div class="data-preview-title">Children (' + childKeys.length + ')</div>';
+      html += '<div class="data-preview">';
+      for (var ci = 0; ci < childKeys.length; ci++) {
+        html += childKeys[ci] + '\n';
+      }
+      html += '</div>';
+    }
+
+    return html;
   }
 
   function render() {
@@ -165,13 +248,18 @@
       var indent = node.depth * 16;
       var selClass = node.path === selectedPath ? ' selected' : '';
       var typeClass = node.isGroup ? 'tree-group' : 'tree-dataset';
-      var icon = node.isGroup ? (expandedPaths[node.path] ? '\u25BC' : '\u25B6') : '\u25A0';
+      var icon;
+      if (node.isGroup) {
+        icon = expandedPaths[node.path] ? '\u25BC' : '\u25B6';
+      } else {
+        icon = '\u25A0';
+      }
 
       html += '<div class="tree-node ' + typeClass + selClass + '" data-path="' + node.path + '" data-isgroup="' + node.isGroup + '">';
       html += '<span class="tree-indent" style="width:' + indent + 'px"></span>';
       html += '<span class="tree-icon">' + icon + '</span>';
       html += node.name;
-      if (!node.isGroup && node.shape) {
+      if (node.isDataset && node.shape) {
         html += ' <span style="color:#999;font-size:10px">[' + node.shape.join('x') + ']</span>';
       }
       html += '</div>';
@@ -181,46 +269,7 @@
     // Data panel
     html += '<div class="hdf5-data-panel">';
     if (selectedPath) {
-      var obj;
-      try { obj = hdf5File.get(selectedPath); } catch(e) { obj = null; }
-
-      if (obj) {
-        var isGroup = obj.keys !== undefined;
-        html += '<div class="data-title">' + (isGroup ? '\uD83D\uDCC1 ' : '\uD83D\uDCCA ') + selectedPath + '</div>';
-
-        // Meta
-        if (!isGroup) {
-          html += '<div class="data-meta">';
-          try { if (obj.shape) html += '<span class="meta-item">Shape: <b>' + obj.shape.join(' x ') + '</b></span>'; } catch(e) {}
-          try { if (obj.dtype) html += '<span class="meta-item">Dtype: <b>' + obj.dtype + '</b></span>'; } catch(e) {}
-          html += '</div>';
-        }
-
-        // Attrs
-        var attrs = getAttrs(obj);
-        var attrKeys = Object.keys(attrs);
-        if (attrKeys.length > 0) {
-          html += '<div class="data-attrs">';
-          html += '<div class="data-attrs-title">Attributes (' + attrKeys.length + ')</div>';
-          for (var ai = 0; ai < attrKeys.length; ai++) {
-            html += '<div class="attr-row"><b>' + attrKeys[ai] + '</b>: ' + attrs[attrKeys[ai]] + '</div>';
-          }
-          html += '</div>';
-        }
-
-        // Data preview
-        if (!isGroup) {
-          html += '<div class="data-preview-title">Data Preview</div>';
-          html += '<div class="data-preview">' + getDataPreview(obj) + '</div>';
-        } else {
-          var childKeys;
-          try { childKeys = obj.keys ? obj.keys : Object.keys(obj); } catch(e) { childKeys = []; }
-          html += '<div class="data-preview-title">Children (' + childKeys.length + ')</div>';
-          html += '<div class="data-preview">' + childKeys.join('\n') + '</div>';
-        }
-      } else {
-        html += '<div class="data-empty">Unable to read: ' + selectedPath + '</div>';
-      }
+      html += renderDetail(selectedPath);
     } else {
       html += '<div class="data-empty">Select an item from the tree to view details</div>';
     }
