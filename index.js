@@ -8,7 +8,7 @@
   var selectedPath = '';
   var expandedPaths = {};
 
-  var JSFIVE_CDN = 'https://cdn.jsdelivr.net/npm/jsfive@0.3.10/dist/browser/hdf5.js';
+  var JSFIVE_CDN = 'https://cdn.jsdelivr.net/npm/jsfive@0.3.15/dist/browser/hdf5.js';
 
   function loadScript(url, cb) {
     if (window.hdf5) { cb(); return; }
