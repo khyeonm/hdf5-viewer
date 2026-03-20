@@ -296,7 +296,7 @@
   window.AutoPipePlugin = {
     render: function(container, fileUrl, filename) {
       rootEl = container;
-      rootEl.innerHTML = '<div class="hdf5-loading">Loading ' + filename + '...</div>';
+      rootEl.innerHTML = '<div class="ap-loading">Loading...</div>';
       hdf5File = null; treeData = []; selectedPath = ''; expandedPaths = {};
 
       loadScript(JSFIVE_CDN, function(err) {
