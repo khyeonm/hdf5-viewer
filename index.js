@@ -8,7 +8,7 @@
   var selectedPath = '';
   var expandedPaths = {};
 
-  var JSFIVE_CDN = 'https://cdn.jsdelivr.net/npm/jsfive@0.3.15/dist/browser/hdf5.js';
+  var JSFIVE_CDN = 'https://cdn.jsdelivr.net/npm/jsfive@0.4.0/dist/browser/hdf5.js';
 
   function loadScript(url, cb) {
     if (window.hdf5) { cb(); return; }
@@ -301,7 +301,7 @@
 
       loadScript(JSFIVE_CDN, function(err) {
         if (err) {
-          rootEl.innerHTML = '<div class="hdf5-error">Failed to load jsfive library.</div>';
+          rootEl.innerHTML = '<div class="hdf5-error">Failed to load jsfive library.<br><pre style="text-align:left;font-size:11px;margin-top:8px">' + (err.message || err) + '</pre></div>';
           return;
         }
 
@@ -312,11 +312,11 @@
               hdf5File = new hdf5.File(buf);
               render();
             } catch(e) {
-              rootEl.innerHTML = '<div class="hdf5-error">Error parsing HDF5 file: ' + e.message + '</div>';
+              rootEl.innerHTML = '<div class="hdf5-error">Error parsing HDF5 file: ' + e.message + '<br><pre style="text-align:left;font-size:11px;margin-top:8px;max-height:200px;overflow:auto">' + (e.stack || '') + '</pre></div>';
             }
           })
           .catch(function(err) {
-            rootEl.innerHTML = '<div class="hdf5-error">Error loading file: ' + err.message + '</div>';
+            rootEl.innerHTML = '<div class="hdf5-error">Error loading file: ' + err.message + '<br><pre style="text-align:left;font-size:11px;margin-top:8px">' + (err.stack || '') + '</pre></div>';
           });
       });
     },
