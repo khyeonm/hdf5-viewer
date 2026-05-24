@@ -134,12 +134,13 @@
             ' &nbsp; <b>Dtype:</b> ' + esc(node.dtype || '?') + '</div>';
     html += renderAttrs(node.attrs);
 
-    if (node.too_large) {
-      html += '<div class="h5-toolarge">This dataset is too large to display in the viewer ' +
-              '(' + esc(shapeStr(node.shape)) + ').<br>Download the file to inspect its full contents.</div>';
-    } else if (node.error) {
+    if (node.error) {
       html += '<div class="h5-toolarge">Could not read values: ' + esc(node.error) + '</div>';
     } else if (node.values !== undefined) {
+      if (node.preview) {
+        html += '<div class="h5-preview-note">Preview: ' + esc(node.preview_note || 'partial') +
+                '. Dataset is too large to display fully — download the file for complete contents.</div>';
+      }
       html += renderValues(node);
     } else {
       html += '<div class="h5-info">No preview available.</div>';

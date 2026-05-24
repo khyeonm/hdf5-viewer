@@ -96,6 +96,16 @@
   line-height: 1.6;
 }
 
+.h5-preview-note {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #1e40af;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
 .h5-empty { color: #9ca3af; padding: 40px; text-align: center; }
 
 .ap-loading { padding: 40px; text-align: center; color: #6b7280; }
