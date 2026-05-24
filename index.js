@@ -1,325 +1,211 @@
-// AutoPipe Plugin: hdf5-viewer
-// HDF5 tree explorer with dataset preview (via jsfive CDN)
+// AutoPipe Plugin: hdf5-viewer (v2 — server-side h5py extraction)
+//
+// The previous jsfive-based implementation parsed HDF5 entirely in the browser,
+// which required downloading the whole file. That failed for large h5ad files
+// (the server returns an empty body for files >= 10MB without a Range request),
+// and large files would also freeze the browser.
+//
+// This version delegates parsing to server-side h5py (run via Docker on the SSH
+// server, defined in manifest.json's data_source). The server returns a JSON tree:
+//   { name, type:'group'|'dataset', children?, shape?, dtype?, attrs?, values?, too_large? }
+// Small datasets include `values`; large datasets carry `too_large:true` so the
+// browser never has to load big arrays.
+//
+// The old jsfive implementation is preserved in index.js.jsfive_backup.
 
 (function() {
   var rootEl = null;
-  var hdf5File = null;
-  var treeData = [];
-  var selectedPath = '';
-  var expandedPaths = {};
+  var tree = null;            // root node from server
+  var selectedNode = null;    // currently selected node
+  var expanded = {};          // path -> bool
 
-  var JSFIVE_CDN = 'https://cdn.jsdelivr.net/npm/jsfive@0.4.0/dist/browser/hdf5.js';
-
-  function loadScript(url, cb) {
-    if (window.hdf5) { cb(); return; }
-    var s = document.createElement('script');
-    s.src = url;
-    s.onload = function() { cb(); };
-    s.onerror = function() { cb(new Error('Failed to load jsfive')); };
-    document.head.appendChild(s);
+  // ---- helpers ----------------------------------------------------------
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  function isDataset(obj) {
-    if (!obj) return false;
-    try { if (obj.shape && obj.shape.length > 0) return true; } catch(e) {}
-    try { if (obj.dtype) return true; } catch(e) {}
-    try { if (obj.value !== undefined && obj.keys === undefined) return true; } catch(e) {}
-    return false;
+  function shapeStr(shape) {
+    if (!shape || !shape.length) return 'scalar';
+    return '(' + shape.join(' × ') + ')';
   }
 
-  function isGroupObj(obj) {
-    if (!obj) return false;
-    try { return obj.keys !== undefined && !isDataset(obj); } catch(e) { return false; }
+  // Assign a stable path to every node (server tree has names but no paths)
+  function assignPaths(node, path) {
+    node._path = path;
+    if (node.type === 'group' && node.children) {
+      for (var i = 0; i < node.children.length; i++) {
+        var c = node.children[i];
+        assignPaths(c, path === '/' ? '/' + c.name : path + '/' + c.name);
+      }
+    }
   }
 
-  function getChildKeys(obj) {
-    try { return obj.keys ? obj.keys : Object.keys(obj); } catch(e) { return []; }
+  function findByPath(node, path) {
+    if (node._path === path) return node;
+    if (node.children) {
+      for (var i = 0; i < node.children.length; i++) {
+        var r = findByPath(node.children[i], path);
+        if (r) return r;
+      }
+    }
+    return null;
   }
 
-  function walkTree(group, path, depth) {
-    var nodes = [];
-    if (depth > 8) return nodes;
-    var keys = getChildKeys(group);
+  // ---- tree rendering ---------------------------------------------------
+  function renderTreeNode(node, depth, out) {
+    if (node._path !== '/') {
+      var isGroup = node.type === 'group';
+      var pad = depth * 16;
+      var icon = isGroup ? (expanded[node._path] ? '▼' : '▶') : '●';
+      var meta = isGroup ? '' :
+        '<span class="h5-meta">' + esc(shapeStr(node.shape)) + ' ' + esc(node.dtype || '') + '</span>';
+      var sel = (selectedNode && selectedNode._path === node._path) ? ' selected' : '';
+      out.push(
+        '<div class="h5-node' + sel + '" data-path="' + esc(node._path) + '" ' +
+        'data-isgroup="' + isGroup + '" style="padding-left:' + pad + 'px">' +
+        '<span class="h5-icon">' + icon + '</span>' +
+        '<span class="h5-name">' + esc(node.name) + '</span>' + meta +
+        '</div>'
+      );
+    }
+    if (node.type === 'group' && node.children && (node._path === '/' || expanded[node._path])) {
+      for (var i = 0; i < node.children.length; i++) {
+        renderTreeNode(node.children[i], node._path === '/' ? 0 : depth + 1, out);
+      }
+    }
+  }
 
+  // ---- detail panel -----------------------------------------------------
+  function renderAttrs(attrs) {
+    if (!attrs) return '';
+    var keys = Object.keys(attrs);
+    if (!keys.length) return '';
+    var rows = '';
     for (var i = 0; i < keys.length; i++) {
-      var key = keys[i];
-      var childPath = path ? path + '/' + key : key;
-      var child;
-      try { child = group.get(key); } catch(e) { continue; }
-      if (!child) continue;
-
-      var dataset = isDataset(child);
-      var grp = isGroupObj(child);
-
-      // If it has both keys and shape, treat as a hybrid (group with data)
-      var hasChildren = false;
-      try { hasChildren = grp || (child.keys !== undefined && getChildKeys(child).length > 0 && !dataset); } catch(e) {}
-
-      // Some h5ad objects have keys AND shape — they are datasets inside a group-like wrapper
-      var hasKeysAndShape = false;
-      try { hasKeysAndShape = child.keys !== undefined && child.shape && child.shape.length > 0; } catch(e) {}
-
-      var nodeIsGroup = hasChildren && !hasKeysAndShape;
-
-      var node = {
-        name: key,
-        path: childPath,
-        depth: depth,
-        isGroup: nodeIsGroup,
-        isDataset: dataset || hasKeysAndShape,
-        shape: null,
-        dtype: null
-      };
-
-      if (dataset || hasKeysAndShape) {
-        try { node.shape = child.shape; } catch(e) {}
-        try { node.dtype = child.dtype; } catch(e) {}
-      }
-
-      nodes.push(node);
-
-      if (nodeIsGroup && expandedPaths[childPath]) {
-        var children = walkTree(child, childPath, depth + 1);
-        for (var j = 0; j < children.length; j++) nodes.push(children[j]);
-      }
+      var v = attrs[keys[i]];
+      if (typeof v === 'object') v = JSON.stringify(v);
+      rows += '<tr><td class="h5-attr-k">' + esc(keys[i]) + '</td><td>' + esc(String(v)) + '</td></tr>';
     }
-    return nodes;
+    return '<div class="h5-section">Attributes</div><table class="h5-attrs">' + rows + '</table>';
   }
 
-  function getAttrs(obj) {
-    var attrs = {};
-    try {
-      if (obj.attrs) {
-        var akeys = Object.keys(obj.attrs);
-        for (var i = 0; i < Math.min(akeys.length, 20); i++) {
-          var v = obj.attrs[akeys[i]];
-          attrs[akeys[i]] = typeof v === 'object' ? JSON.stringify(v).substring(0, 200) : String(v).substring(0, 200);
-        }
-      }
-    } catch(e) {}
-    return attrs;
-  }
-
-  var MAX_ELEMENTS = 1000000;
-  var MAX_PREVIEW_ROWS = 50;
-  var MAX_PREVIEW_COLS = 10;
-
-  function totalElements(shape) {
-    if (!shape || !shape.length) return 0;
-    var n = 1;
-    for (var i = 0; i < shape.length; i++) n *= shape[i];
-    return n;
-  }
-
-  function formatVal(v) {
-    if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(4);
-    return String(v);
-  }
-
-  function getDataPreview(dataset) {
-    try {
-      var shape = dataset.shape;
-      var total = totalElements(shape);
-
-      if (total > MAX_ELEMENTS) {
-        return '<div class="data-too-large">Dataset too large to preview (' +
-          total.toLocaleString() + ' elements, ' + shape.join(' x ') +
-          '). Use Python to access this data.</div>';
-      }
-
-      var val = dataset.value;
-      if (!val) return '<span style="color:#999">(empty)</span>';
-
-      // 2D array
-      if (shape && shape.length === 2) {
-        var rows = shape[0];
-        var cols = shape[1];
-        var showRows = Math.min(rows, MAX_PREVIEW_ROWS);
-        var showCols = Math.min(cols, MAX_PREVIEW_COLS);
-
-        var html = '<div class="data-size-info">' + rows.toLocaleString() + ' rows x ' +
-          cols.toLocaleString() + ' columns';
-        if (showRows < rows || showCols < cols) {
-          html += ' (showing ' + showRows + ' x ' + showCols + ')';
-        }
-        html += '</div>';
-        html += '<div class="data-table-wrap"><table class="data-table">';
-        html += '<thead><tr><th>#</th>';
-        for (var c = 0; c < showCols; c++) html += '<th>' + c + '</th>';
-        if (showCols < cols) html += '<th>...</th>';
-        html += '</tr></thead><tbody>';
-        for (var r = 0; r < showRows; r++) {
-          html += '<tr><td class="row-idx">' + r + '</td>';
-          for (var c2 = 0; c2 < showCols; c2++) {
-            html += '<td>' + formatVal(val[r * cols + c2]) + '</td>';
-          }
-          if (showCols < cols) html += '<td>...</td>';
-          html += '</tr>';
-        }
-        if (showRows < rows) {
-          html += '<tr><td colspan="' + (showCols + 2) + '" style="text-align:center;color:#999;padding:8px">... ' +
-            (rows - showRows).toLocaleString() + ' more rows</td></tr>';
-        }
-        html += '</tbody></table></div>';
-        return html;
-      }
-
-      // 1D array
-      if (Array.isArray(val) || ArrayBuffer.isView(val)) {
-        var len = val.length;
-        var arr = Array.from(val).slice(0, 100);
-        var text = arr.map(formatVal).join(', ');
-        if (len > 100) text += '\n... (' + len.toLocaleString() + ' total elements)';
-        return '<pre>' + text + '</pre>';
-      }
-
-      // Scalar or string
-      return '<pre>' + String(val).substring(0, 5000) + '</pre>';
-    } catch(e) {
-      return '<span style="color:#c62828">(unable to read: ' + e.message + ')</span>';
+  function renderValues(node) {
+    var v = node.values;
+    // scalar
+    if (!Array.isArray(v)) {
+      return '<div class="h5-section">Value</div><pre class="h5-values">' + esc(String(v)) + '</pre>';
     }
-  }
-
-  function buildTree() {
-    if (!hdf5File) return;
-    treeData = walkTree(hdf5File, '', 0);
-  }
-
-  function renderDetail(path) {
-    var obj;
-    try { obj = hdf5File.get(path); } catch(e) { return '<div class="data-empty">Unable to read: ' + path + '</div>'; }
-    if (!obj) return '<div class="data-empty">Unable to read: ' + path + '</div>';
-
-    var dataset = isDataset(obj);
-    var grp = isGroupObj(obj);
-    var html = '';
-
-    html += '<div class="data-title">' + (dataset ? '\uD83D\uDCCA ' : '\uD83D\uDCC1 ') + path + '</div>';
-
-    // Shape & dtype for datasets
-    if (dataset) {
-      html += '<div class="data-meta">';
-      try { if (obj.shape) html += '<span class="meta-item">Shape: <b>' + obj.shape.join(' x ') + '</b></span>'; } catch(e) {}
-      try { if (obj.dtype) html += '<span class="meta-item">Dtype: <b>' + obj.dtype + '</b></span>'; } catch(e) {}
-      html += '</div>';
+    // 1D
+    if (!Array.isArray(v[0])) {
+      var items = v.slice(0, 1000).map(function(x) { return esc(String(x)); });
+      return '<div class="h5-section">Values (' + v.length + ')</div>' +
+        '<pre class="h5-values">[' + items.join(', ') + ']</pre>';
     }
-
-    // Attributes
-    var attrs = getAttrs(obj);
-    var attrKeys = Object.keys(attrs);
-    if (attrKeys.length > 0) {
-      html += '<div class="data-attrs">';
-      html += '<div class="data-attrs-title">Attributes (' + attrKeys.length + ')</div>';
-      for (var ai = 0; ai < attrKeys.length; ai++) {
-        html += '<div class="attr-row"><b>' + attrKeys[ai] + '</b>: ' + attrs[attrKeys[ai]] + '</div>';
+    // 2D — render as table
+    var html = '<div class="h5-section">Values ' + esc(shapeStr(node.shape)) + '</div>';
+    html += '<div class="h5-table-wrap"><table class="h5-table"><tbody>';
+    for (var r = 0; r < Math.min(v.length, 100); r++) {
+      html += '<tr>';
+      var row = v[r];
+      for (var c = 0; c < Math.min(row.length, 50); c++) {
+        html += '<td>' + esc(String(row[c])) + '</td>';
       }
-      html += '</div>';
+      html += '</tr>';
     }
-
-    // Data preview for datasets
-    if (dataset) {
-      html += '<div class="data-preview-title">Data Preview</div>';
-      html += '<div class="data-preview">' + getDataPreview(obj) + '</div>';
-    } else if (grp) {
-      // Group: show children list
-      var childKeys = getChildKeys(obj);
-      html += '<div class="data-preview-title">Children (' + childKeys.length + ')</div>';
-      html += '<div class="data-preview">';
-      for (var ci = 0; ci < childKeys.length; ci++) {
-        html += childKeys[ci] + '\n';
-      }
-      html += '</div>';
-    }
-
+    html += '</tbody></table></div>';
     return html;
   }
 
-  function render() {
-    if (!rootEl) return;
-    buildTree();
-
-    var html = '<div class="hdf5-plugin">';
-
-    // Tree panel
-    html += '<div class="hdf5-tree-panel">';
-    html += '<div class="hdf5-tree-header">HDF5 Structure</div>';
-    for (var i = 0; i < treeData.length; i++) {
-      var node = treeData[i];
-      var indent = node.depth * 16;
-      var selClass = node.path === selectedPath ? ' selected' : '';
-      var typeClass = node.isGroup ? 'tree-group' : 'tree-dataset';
-      var icon;
-      if (node.isGroup) {
-        icon = expandedPaths[node.path] ? '\u25BC' : '\u25B6';
-      } else {
-        icon = '\u25A0';
-      }
-
-      html += '<div class="tree-node ' + typeClass + selClass + '" data-path="' + node.path + '" data-isgroup="' + node.isGroup + '">';
-      html += '<span class="tree-indent" style="width:' + indent + 'px"></span>';
-      html += '<span class="tree-icon">' + icon + '</span>';
-      html += node.name;
-      if (node.isDataset && node.shape) {
-        html += ' <span style="color:#999;font-size:10px">[' + node.shape.join('x') + ']</span>';
-      }
-      html += '</div>';
+  function renderDetail(node) {
+    if (!node) {
+      return '<div class="h5-empty">Select a dataset or group from the tree.</div>';
     }
-    html += '</div>';
+    var html = '<div class="h5-detail-head">' + esc(node._path) + '</div>';
 
-    // Data panel
-    html += '<div class="hdf5-data-panel">';
-    if (selectedPath) {
-      html += renderDetail(selectedPath);
+    if (node.type === 'group') {
+      var n = node.children ? node.children.length : 0;
+      html += '<div class="h5-info">Group with ' + n + ' item' + (n === 1 ? '' : 's') + '</div>';
+      html += renderAttrs(node.attrs);
+      return html;
+    }
+
+    // dataset
+    html += '<div class="h5-info"><b>Shape:</b> ' + esc(shapeStr(node.shape)) +
+            ' &nbsp; <b>Dtype:</b> ' + esc(node.dtype || '?') + '</div>';
+    html += renderAttrs(node.attrs);
+
+    if (node.too_large) {
+      html += '<div class="h5-toolarge">This dataset is too large to display in the viewer ' +
+              '(' + esc(shapeStr(node.shape)) + ').<br>Download the file to inspect its full contents.</div>';
+    } else if (node.error) {
+      html += '<div class="h5-toolarge">Could not read values: ' + esc(node.error) + '</div>';
+    } else if (node.values !== undefined) {
+      html += renderValues(node);
     } else {
-      html += '<div class="data-empty">Select an item from the tree to view details</div>';
+      html += '<div class="h5-info">No preview available.</div>';
     }
-    html += '</div>';
+    return html;
+  }
 
+  // ---- main render ------------------------------------------------------
+  function render() {
+    if (!rootEl || !tree) return;
+    var treeOut = [];
+    renderTreeNode(tree, 0, treeOut);
+
+    var html = '<div class="h5-plugin">';
+    html += '<div class="h5-tree">' + treeOut.join('') + '</div>';
+    html += '<div class="h5-detail">' + renderDetail(selectedNode) + '</div>';
     html += '</div>';
     rootEl.innerHTML = html;
 
-    // Events
-    var nodes = rootEl.querySelectorAll('.tree-node');
-    for (var ni = 0; ni < nodes.length; ni++) {
-      nodes[ni].addEventListener('click', function() {
+    var nodes = rootEl.querySelectorAll('.h5-node');
+    for (var i = 0; i < nodes.length; i++) {
+      nodes[i].addEventListener('click', function() {
         var path = this.getAttribute('data-path');
         var isGroup = this.getAttribute('data-isgroup') === 'true';
-        if (isGroup) {
-          expandedPaths[path] = !expandedPaths[path];
-        }
-        selectedPath = path;
+        if (isGroup) expanded[path] = !expanded[path];
+        selectedNode = findByPath(tree, path);
         render();
       });
     }
   }
 
+  // ---- entry ------------------------------------------------------------
   window.AutoPipePlugin = {
     render: function(container, fileUrl, filename) {
       rootEl = container;
-      rootEl.innerHTML = '<div class="ap-loading">Loading...</div>';
-      hdf5File = null; treeData = []; selectedPath = ''; expandedPaths = {};
+      rootEl.innerHTML = '<div class="ap-loading">Extracting HDF5 structure on the server (this may take a moment for the first run)...</div>';
+      tree = null; selectedNode = null; expanded = {};
 
-      loadScript(JSFIVE_CDN, function(err) {
-        if (err) {
-          rootEl.innerHTML = '<div class="hdf5-error">Failed to load jsfive library.<br><pre style="text-align:left;font-size:11px;margin-top:8px">' + (err.message || err) + '</pre></div>';
-          return;
-        }
-
-        fetch(fileUrl)
-          .then(function(resp) { return resp.arrayBuffer(); })
-          .then(function(buf) {
-            try {
-              hdf5File = new hdf5.File(buf);
-              render();
-            } catch(e) {
-              rootEl.innerHTML = '<div class="hdf5-error">Error parsing HDF5 file: ' + e.message + '<br><pre style="text-align:left;font-size:11px;margin-top:8px;max-height:200px;overflow:auto">' + (e.stack || '') + '</pre></div>';
-            }
-          })
-          .catch(function(err) {
-            rootEl.innerHTML = '<div class="hdf5-error">Error loading file: ' + err.message + '<br><pre style="text-align:left;font-size:11px;margin-top:8px">' + (err.stack || '') + '</pre></div>';
-          });
-      });
+      // The server runs h5py (via manifest data_source) and returns the tree
+      // as a JSON string in `meta` (meta_parse: "none").
+      fetch('/data/' + encodeURIComponent(filename) + '?page=0')
+        .then(function(resp) { return resp.json(); })
+        .then(function(data) {
+          if (data.error) {
+            rootEl.innerHTML = '<div class="hdf5-error">Error: ' + esc(data.error) + '</div>';
+            return;
+          }
+          var raw = data.meta;
+          if (!raw) {
+            rootEl.innerHTML = '<div class="hdf5-error">Server returned no structure. The h5py extraction may have failed.</div>';
+            return;
+          }
+          try {
+            tree = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+          } catch (e) {
+            rootEl.innerHTML = '<div class="hdf5-error">Failed to parse structure JSON: ' + esc(e.message) +
+              '<br><pre style="font-size:11px;max-height:200px;overflow:auto">' + esc(String(raw).slice(0, 2000)) + '</pre></div>';
+            return;
+          }
+          assignPaths(tree, '/');
+          render();
+        })
+        .catch(function(err) {
+          rootEl.innerHTML = '<div class="hdf5-error">Error loading structure: ' + esc(err.message) + '</div>';
+        });
     },
-    destroy: function() { hdf5File = null; treeData = []; rootEl = null; }
+    destroy: function() { tree = null; selectedNode = null; rootEl = null; }
   };
 })();
