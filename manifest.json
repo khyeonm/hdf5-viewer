@@ -1,6 +1,6 @@
 {
   "name": "hdf5-viewer",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "HDF5/h5ad tree explorer with server-side h5py extraction. Small datasets show full values; large datasets show a preview slice.",
   "extensions": [
     "h5ad",

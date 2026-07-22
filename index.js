@@ -183,8 +183,10 @@
   // "small enough to show in full" the same way.
   var FULL_VALUE_LIMIT = 1000;
   // Above this a dataset is described but never read — jsfive has no partial
-  // read, so touching .value would pull the entire array into memory.
-  var READ_LIMIT = 200000;
+  // read, so touching .value would pull the entire array into memory. Raised
+  // well past the "show in full" threshold so ordinary h5ad matrices still get
+  // a truncated preview rather than nothing at all.
+  var READ_LIMIT = 5000000;
   var CHUNK = 8 * 1024 * 1024;
 
   var JSFIVE_LOCAL = '/plugin/hdf5-viewer/jsfive.js';
@@ -248,8 +250,19 @@
     return attrs;
   }
 
+  // A dataset is anything carrying a shape. Do not test `keys` here: jsfive
+  // exposes `keys` as a method on datasets too, so checking it for undefined
+  // misclassifies every dataset as a group and then blows up on keys.forEach.
   function h5IsDataset(obj) {
-    try { return obj && obj.shape !== undefined && obj.keys === undefined; } catch (e) { return false; }
+    try { return !!obj && obj.shape !== undefined; } catch (e) { return false; }
+  }
+
+  // Only a group's `keys` is the array of child names.
+  function h5ChildKeys(obj) {
+    try {
+      var k = obj.keys;
+      return Array.isArray(k) ? k : [];
+    } catch (e) { return []; }
   }
 
   function elementCount(shape) {
@@ -298,9 +311,7 @@
   function h5Node(name, obj) {
     if (!h5IsDataset(obj)) {
       var children = [];
-      var keys = [];
-      try { keys = obj.keys || []; } catch (e) { keys = []; }
-      keys.forEach(function(k) {
+      h5ChildKeys(obj).forEach(function(k) {
         try { children.push(h5Node(k, obj.get(k))); } catch (e) {
           children.push({ name: k, type: 'dataset', shape: [], dtype: '?', attrs: {},
                           error: String(e && e.message || e) });
@@ -328,7 +339,11 @@
     try {
       node.values = sliceValues(obj.value, shape, node);
     } catch (e) {
-      node.error = String(e && e.message || e);
+      // A dataset that cannot be decoded should not sink the whole tree; keep
+      // the node with its shape and dtype and say why the values are absent.
+      node.preview = true;
+      node.total_elements = n;
+      node.preview_note = 'could not read values: ' + String(e && e.message || e);
     }
     return node;
   }
@@ -338,10 +353,9 @@
       .then(function() { return fetchFileBuffer(fileUrl); })
       .then(function(buf) {
         var f = new hdf5.File(buf);
-        var keys = f.keys || [];
         return {
           name: '/', type: 'group', attrs: h5Attrs(f),
-          children: keys.map(function(k) { return h5Node(k, f.get(k)); })
+          children: h5ChildKeys(f).map(function(k) { return h5Node(k, f.get(k)); })
         };
       });
   }
